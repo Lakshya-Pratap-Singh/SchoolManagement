@@ -72,7 +72,8 @@ All optional for local use. Copy `.env.example` to `.env` to change them (`.env`
 
 ```
 public/            Browser UI (index.html, app.js, style.css) - talks to the API only
-src/app.js         Express app: login, auth gate, error handler, API docs
+src/server.js      Server entry point; initializes SQLite and listens for requests
+src/create-app.js  Express app factory: login, auth gate, error handler, API docs
 src/routes/*.js    HTTP layer: validate input, check role, call the database (admin, attendance, exams, fees, reports, timetable)
 src/access.js      Row-level rules (teacher-section, guardian-child, student-self), grading, fee balance helpers
 src/auth.js        JWT + bcrypt + requireRole middleware

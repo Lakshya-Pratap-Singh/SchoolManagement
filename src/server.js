@@ -10,7 +10,7 @@ if (process.env.VERCEL) {
 
 const { openDb } = require('./db');
 const { seed } = require('./seed');
-const { createApp } = require('./app');
+const { createApp } = require('./create-app');
 
 const db = openDb();
 if (db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0) {

@@ -1,7 +1,7 @@
 const request = require('supertest');
 const { openDb } = require('../src/db');
 const { seed } = require('../src/seed');
-const { createApp } = require('../src/app');
+const { createApp } = require('../src/create-app');
 const { gradeFor } = require('../src/access');
 
 let db, app;
