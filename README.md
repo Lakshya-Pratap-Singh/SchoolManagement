@@ -12,7 +12,7 @@ Requires **Node.js 22.13 or newer** (check with `node -v`). SQLite comes built i
 ```bash
 npm install
 npm start            # http://localhost:3000   (first run auto-loads demo data)
-npm test             # 29 automated tests
+npm test             # 30 automated tests
 ```
 
 - App: http://localhost:3000
@@ -118,7 +118,7 @@ erDiagram
 
 ## Tests
 
-`npm test` runs 29 tests with Jest + Supertest against a fresh in-memory database per test:
+`npm test` runs 30 tests with Jest + Supertest against a fresh in-memory database per test:
 the five acceptance tests (each with positive **and** negative cases: 403s, 400s, 409s), grading boundary unit tests,
 idempotent-retry and overpayment cases, login/validation behaviour, and student CRUD conflicts.
 
@@ -129,7 +129,7 @@ idempotent-retry and overpayment cases, login/validation behaviour, and student 
 - Login token is kept in `sessionStorage` (simple; an HttpOnly cookie would be safer against XSS). No rate limiting, no HTTPS - put it behind a reverse proxy for real use.
 - SQLite is a single-file database: ideal for a demo/MVP, not for many concurrent writers. Migrations are the idempotent `schema.sql`, not versioned migration files.
 - It uses Node's built-in `node:sqlite` module, which Node still labels experimental (the warning is hidden by the npm scripts). The trade-off is zero native dependencies; swapping to `better-sqlite3` or PostgreSQL only touches `src/db.js` and the `db.transaction` calls.
-- No password reset, no admin-created admins, no editing of classes/sections/subjects (create and delete only).
+- No self-service password reset or admin-created admins; administrators can reset teacher/guardian passwords while editing those accounts. Students and accounts can be edited; teachers/guardians can only be deleted if no records depend on them. Classes, sections, subjects, and assignments have create/delete but no edit flow.
 - Attendance statuses are Present / Absent / Late (no "Excused").
 - A UI smoke test was run against a live server in a simulated browser; there are no automated browser tests.
 

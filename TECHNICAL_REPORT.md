@@ -46,7 +46,7 @@ A modular monolith in three layers:
 | Grading rules with gaps | Rule set must contain 0%, so every score gets a grade |
 
 ## 6. Testing
-29 automated tests (Jest + Supertest) with a fresh in-memory database per test. They cover the five acceptance criteria with both
+30 automated tests (Jest + Supertest) with a fresh in-memory database per test. They cover the five acceptance criteria with both
 success and failure paths, plus grade boundaries, idempotent retries, reconciliation (`billed − paid = outstanding` computed
 independently from the ledger), validation, pagination/search and conflict handling. A jsdom smoke run of the UI exercised all three roles' screens and a guardian payment.
 

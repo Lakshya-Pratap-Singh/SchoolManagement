@@ -96,6 +96,32 @@ module.exports = (db) => {
     audit(db, req.user, 'CREATE', 'users', id, { email: v.email, role: v.role });
     res.status(201).json({ id: Number(id), name: v.name, email: v.email.toLowerCase(), role: v.role });
   });
+  r.put('/users/:id', admin, (req, res) => {
+    const id = Number(req.params.id);
+    const current = db.prepare("SELECT id, role FROM users WHERE id = ? AND role IN ('TEACHER','GUARDIAN')").get(id);
+    if (!current) throw notFound('Teacher or guardian not found');
+    const v = validate(req.body, { name: 'string', email: 'email' });
+    const password = req.body.password;
+    if (password !== undefined && password !== '' && (typeof password !== 'string' || password.length < 8)) {
+      throw bad('Validation failed', { password: 'min 8 characters' });
+    }
+    if (password) {
+      db.prepare('UPDATE users SET name=?, email=?, password_hash=? WHERE id=?')
+        .run(v.name, v.email.toLowerCase(), hash(password), id);
+    } else {
+      db.prepare('UPDATE users SET name=?, email=? WHERE id=?').run(v.name, v.email.toLowerCase(), id);
+    }
+    audit(db, req.user, 'UPDATE', 'users', id, { email: v.email.toLowerCase(), role: current.role });
+    res.json({ id, name: v.name, email: v.email.toLowerCase(), role: current.role });
+  });
+  r.delete('/users/:id', admin, (req, res) => {
+    const id = Number(req.params.id);
+    const current = db.prepare("SELECT id, role FROM users WHERE id = ? AND role IN ('TEACHER','GUARDIAN')").get(id);
+    if (!current) throw notFound('Teacher or guardian not found');
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    audit(db, req.user, 'DELETE', 'users', id, { role: current.role });
+    res.status(204).end();
+  });
 
   // ---- students ----
   r.get('/students', (req, res) => {

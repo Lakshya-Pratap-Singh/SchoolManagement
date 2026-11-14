@@ -121,10 +121,12 @@ async function viewDashboard(root) {
 async function viewStudents(root) {
   const [secs, guardians] = await Promise.all([api('GET', '/sections'), api('GET', '/users?role=GUARDIAN&limit=100')]);
   const f = { q: '', section_id: '', page: 1, limit: 8 };
+  let editingStudent = null;
   root.innerHTML = `<section class="card"><h2>Add student</h2><form id="add"><div class="row">
     <div><label for="n">Name</label><input id="n" name="name" required></div><div><label for="a">Admission no.</label><input id="a" name="admission_no" required></div>
     <div><label for="s">Section</label><select id="s" name="section_id">${options(secs.data, 'id', 'label')}</select></div>
-    <div><label for="g">Guardian</label><select id="g" name="guardian_id">${options(guardians.data, 'id', 'name')}</select></div><button type="submit">Add</button></div></form></section>
+    <div><label for="g">Guardian</label><select id="g" name="guardian_id">${options(guardians.data, 'id', 'name')}</select></div>
+    <button type="submit">Add</button><button type="button" class="secondary" id="cancelStudentEdit" hidden>Cancel edit</button></div></form></section>
     <section class="card"><form id="flt" class="row"><div><label for="q">Search name / admission no.</label><input id="q" name="q" type="search"></div>
     <div><label for="fs">Section</label><select id="fs" name="section_id"><option value="">All</option>${options(secs.data, 'id', 'label')}</select></div><button type="submit" class="secondary">Filter</button></form><div id="list"></div></section>`;
   const list = $('#list', root);
@@ -132,14 +134,32 @@ async function viewStudents(root) {
     list.innerHTML = '<p class="loading">Loading…</p>';
     const r = await api('GET', '/students?' + qs(f));
     list.innerHTML = table('Students', [{ h: 'Name', f: (s) => esc(s.name) }, { h: 'Admission', f: (s) => esc(s.admission_no) }, { h: 'Section', f: (s) => esc(s.section_label) }, { h: 'Guardian', f: (s) => esc(s.guardian_name) },
-      { h: '', f: (s) => `<button class="danger small" data-del="${s.id}" aria-label="Delete ${esc(s.name)}">Delete</button>` }], r.data, 'No students match.') + pager(r);
+      { h: '', f: (s) => `<button class="secondary small" data-edit-student="${s.id}">Edit</button> <button class="danger small" data-del="${s.id}" aria-label="Delete ${esc(s.name)}">Delete</button>` }], r.data, 'No students match.') + pager(r);
   });
-  form(root, '#add', async (v, el) => { await api('POST', '/students', { name: v.name, admission_no: v.admission_no, section_id: +v.section_id, guardian_id: +v.guardian_id }); flash('Student added'); el.reset(); f.page = 1; load(); });
+  form(root, '#add', async (v, el) => {
+    const body = { name: v.name, admission_no: v.admission_no, section_id: +v.section_id, guardian_id: +v.guardian_id };
+    await api(editingStudent ? 'PUT' : 'POST', editingStudent ? `/students/${editingStudent.id}` : '/students', body);
+    flash(editingStudent ? 'Student updated' : 'Student added'); el.reset(); editingStudent = null;
+    $('#add button[type=submit]', root).textContent = 'Add'; $('#cancelStudentEdit', root).hidden = true;
+    f.page = 1; load();
+  });
   form(root, '#flt', async (v) => { f.q = v.q; f.section_id = v.section_id; f.page = 1; load(); });
   root.onclick = (e) => {
     const p = e.target.closest('[data-page]'); if (p) { f.page = +p.dataset.page; load(); }
+    const edit = e.target.closest('[data-edit-student]');
+    if (edit) run(async () => {
+      const s = await api('GET', '/students/' + edit.dataset.editStudent);
+      editingStudent = s; $('#n', root).value = s.name; $('#a', root).value = s.admission_no;
+      $('#s', root).value = s.section_id; $('#g', root).value = s.guardian_id;
+      $('#add button[type=submit]', root).textContent = 'Save changes'; $('#cancelStudentEdit', root).hidden = false;
+      $('#add', root).scrollIntoView({ behavior: 'smooth' });
+    });
     const d = e.target.closest('[data-del]');
     if (d && confirm('Delete this student?')) run(async () => { await api('DELETE', '/students/' + d.dataset.del); flash('Student deleted'); load(); });
+  };
+  $('#cancelStudentEdit', root).onclick = () => {
+    editingStudent = null; $('#add', root).reset(); $('#add button[type=submit]', root).textContent = 'Add';
+    $('#cancelStudentEdit', root).hidden = true;
   };
   load();
 }
@@ -147,21 +167,53 @@ async function viewStudents(root) {
 // ---------- admin: teachers & guardians ----------
 async function viewPeople(root) {
   const f = { role: 'TEACHER', q: '', page: 1, limit: 8 };
+  let editingUser = null;
   root.innerHTML = `<section class="card"><h2>Add teacher or guardian</h2><form id="add"><div class="row">
     <div><label for="n">Name</label><input id="n" name="name" required></div><div><label for="e">Email</label><input id="e" name="email" type="email" required></div>
-    <div><label for="p">Password (min 8)</label><input id="p" name="password" type="password" minlength="8" required autocomplete="new-password"></div>
-    <div><label for="r">Role</label><select id="r" name="role"><option>TEACHER</option><option>GUARDIAN</option></select></div><button type="submit">Add</button></div></form></section>
+    <div><label for="p">Password (min 8; leave blank when editing)</label><input id="p" name="password" type="password" minlength="8" autocomplete="new-password"></div>
+    <div><label for="r">Role</label><select id="r" name="role"><option>TEACHER</option><option>GUARDIAN</option></select></div>
+    <button type="submit">Add</button><button type="button" class="secondary" id="cancelUserEdit" hidden>Cancel edit</button></div></form></section>
     <section class="card"><form id="flt" class="row"><div><label for="fr">Show</label><select id="fr" name="role"><option>TEACHER</option><option>GUARDIAN</option></select></div>
     <div><label for="q">Search</label><input id="q" name="q" type="search"></div><button type="submit" class="secondary">Filter</button></form><div id="list"></div></section>`;
   const list = $('#list', root);
   const load = () => run(async () => {
     list.innerHTML = '<p class="loading">Loading…</p>';
     const r = await api('GET', '/users?' + qs(f));
-    list.innerHTML = table(f.role === 'TEACHER' ? 'Teachers' : 'Guardians', [{ h: 'Name', f: (u) => esc(u.name) }, { h: 'Email', f: (u) => esc(u.email) }], r.data, 'No users match.') + pager(r);
+    list.innerHTML = table(f.role === 'TEACHER' ? 'Teachers' : 'Guardians', [{ h: 'Name', f: (u) => esc(u.name) }, { h: 'Email', f: (u) => esc(u.email) },
+      { h: '', f: (u) => `<button class="secondary small" data-edit-user="${u.id}" data-user-role="${u.role}" data-user-name="${esc(u.name)}" data-user-email="${esc(u.email)}">Edit</button> <button class="danger small" data-del-user="${u.id}" aria-label="Delete ${esc(u.name)}">Delete</button>` }], r.data, 'No users match.') + pager(r);
   });
-  form(root, '#add', async (v, el) => { await api('POST', '/users', v); flash('User created'); el.reset(); load(); });
+  form(root, '#add', async (v, el) => {
+    if (editingUser) {
+      await api('PUT', `/users/${editingUser.id}`, { name: v.name, email: v.email, password: v.password });
+      flash('User updated'); editingUser = null;
+    } else {
+      if (!v.password || v.password.length < 8) throw new Error('Password must be at least 8 characters');
+      await api('POST', '/users', { name: v.name, email: v.email, password: v.password, role: v.role });
+      flash('User created');
+    }
+    el.reset(); $('#r', root).disabled = false; $('#add button[type=submit]', root).textContent = 'Add';
+    $('#cancelUserEdit', root).hidden = true; load();
+  });
   form(root, '#flt', async (v) => { f.role = v.role; f.q = v.q; f.page = 1; load(); });
-  root.onclick = (e) => { const p = e.target.closest('[data-page]'); if (p) { f.page = +p.dataset.page; load(); } };
+  root.onclick = (e) => {
+    const p = e.target.closest('[data-page]'); if (p) { f.page = +p.dataset.page; load(); }
+    const edit = e.target.closest('[data-edit-user]');
+    if (edit) {
+      editingUser = { id: Number(edit.dataset.editUser) };
+      $('#n', root).value = edit.dataset.userName; $('#e', root).value = edit.dataset.userEmail; $('#p', root).value = '';
+      $('#r', root).value = edit.dataset.userRole; $('#r', root).disabled = true;
+      $('#add button[type=submit]', root).textContent = 'Save changes'; $('#cancelUserEdit', root).hidden = false;
+      $('#add', root).scrollIntoView({ behavior: 'smooth' });
+    }
+    const del = e.target.closest('[data-del-user]');
+    if (del && confirm('Delete this account? Accounts linked to students or teaching assignments cannot be deleted.')) {
+      run(async () => { await api('DELETE', '/users/' + del.dataset.delUser); flash('User deleted'); load(); });
+    }
+  };
+  $('#cancelUserEdit', root).onclick = () => {
+    editingUser = null; $('#add', root).reset(); $('#r', root).disabled = false;
+    $('#add button[type=submit]', root).textContent = 'Add'; $('#cancelUserEdit', root).hidden = true;
+  };
   load();
 }
 

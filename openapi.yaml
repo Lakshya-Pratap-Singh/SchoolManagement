@@ -76,6 +76,16 @@ paths:
   /api/users:
     get: { summary: List users with search and pagination (admin), parameters: [{ name: role, in: query, schema: { type: string, enum: [TEACHER, GUARDIAN, ADMIN] } }, { $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }], responses: { '200': { $ref: '#/components/responses/Page' } } }
     post: { summary: Create teacher or guardian (admin), requestBody: { content: { application/json: { schema: { type: object, properties: { name: { type: string }, email: { type: string }, password: { type: string, minLength: 8 }, role: { type: string, enum: [TEACHER, GUARDIAN] } } } } } }, responses: { '201': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error409' } } }
+  /api/users/{id}:
+    put:
+      summary: Update a teacher or guardian (admin); role is unchanged and password is optional
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      requestBody: { content: { application/json: { schema: { type: object, required: [name, email], properties: { name: { type: string }, email: { type: string }, password: { type: string, minLength: 8 } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '400': { $ref: '#/components/responses/Error400' }, '404': { $ref: '#/components/responses/Error404' }, '409': { $ref: '#/components/responses/Error409' } }
+    delete:
+      summary: Delete an unreferenced teacher or guardian account (admin)
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      responses: { '204': { description: Deleted }, '404': { $ref: '#/components/responses/Error404' }, '409': { $ref: '#/components/responses/Error409' } }
   /api/students:
     get: { summary: List students (admin all; teacher assigned sections; guardian own children), parameters: [{ $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/section_id' }, { $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }], responses: { '200': { $ref: '#/components/responses/Page' } } }
     post: { summary: Create student (admin), requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Student' } } } }, responses: { '201': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error409' } } }

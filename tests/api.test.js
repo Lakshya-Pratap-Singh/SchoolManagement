@@ -258,12 +258,37 @@ describe('academic administration', () => {
     const body = { name: 'Zoya Khan', admission_no: 'ADM100', section_id: sectionId('Class 5 - A'), guardian_id: guardian };
     expect((await call('admin', 'post', '/api/students', body)).status).toBe(201);
     expect((await call('admin', 'post', '/api/students', body)).status).toBe(409); // duplicate admission_no
+    const created = db.prepare("SELECT id FROM students WHERE admission_no='ADM100'").get();
+    const updated = await call('admin', 'put', `/api/students/${created.id}`, { ...body, name: 'Zoya Ali' });
+    expect(updated.status).toBe(200);
+    expect(updated.body.name).toBe('Zoya Ali');
     const found = (await call('admin', 'get', '/api/students?q=zoya')).body;
     expect(found.total).toBe(1);
     expect((await call('admin', 'delete', `/api/sections/${sectionId('Class 5 - A')}`)).status).toBe(409); // still in use
     const page = (await call('admin', 'get', '/api/students?limit=2&page=2')).body;
     expect(page.data).toHaveLength(2);
     expect(page.total).toBe(6);
+  });
+  test('admin can update/delete teacher and guardian accounts with safe constraints', async () => {
+    const create = await call('admin', 'post', '/api/users', {
+      name: 'New Teacher', email: 'new.teacher@school.test', role: 'TEACHER', password: 'Teacher@123'
+    });
+    expect(create.status).toBe(201);
+    const id = create.body.id;
+    const update = await call('admin', 'put', `/api/users/${id}`, {
+      name: 'Updated Teacher', email: 'updated.teacher@school.test', password: ''
+    });
+    expect(update.status).toBe(200);
+    expect(update.body).toMatchObject({ name: 'Updated Teacher', email: 'updated.teacher@school.test', role: 'TEACHER' });
+    expect((await call('admin', 'delete', `/api/users/${id}`)).status).toBe(204);
+    expect((await call('admin', 'get', `/api/users?role=TEACHER&q=updated.teacher`)).body.total).toBe(0);
+
+    const guardian = db.prepare("SELECT id FROM users WHERE email='meera.guardian@school.test'").get();
+    expect((await call('admin', 'delete', `/api/users/${guardian.id}`)).status).toBe(409);
+    expect((await call('asha', 'put', `/api/users/${guardian.id}`, { name: 'No', email: 'no@school.test' })).status).toBe(403);
+    expect((await call('admin', 'put', `/api/users/${guardian.id}`, {
+      name: 'Invalid Password', email: 'meera2@school.test', password: 'short'
+    })).status).toBe(400);
   });
   test('student guardian must really be a guardian', async () => {
     const teacher = db.prepare("SELECT id FROM users WHERE role='TEACHER'").get().id;
