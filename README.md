@@ -7,7 +7,7 @@ Admin, teacher, guardian, and student roles each get their own view; every permi
 
 ## Quick start
 
-Requires **Node.js 22.13 or newer** (check with `node -v`). SQLite comes built into Node, so there is no database to install.
+Requires **Node.js 24.x** (check with `node -v`). SQLite comes built into Node, so there is no database to install.
 
 ```bash
 npm install
@@ -27,7 +27,7 @@ Vercel can detect this Express app from `src/server.js`. For a demo deployment:
 
 1. Push the project to a Git provider and import the repository in Vercel.
 2. Add a `JWT_SECRET` environment variable in the Vercel project settings, with a random value of at least 32 characters. The app will refuse to start on Vercel without it.
-3. Deploy with the Express framework preset and a Node.js version that supports `node:sqlite` (Node 22.13+).
+3. Use Node.js **24.x** (also pinned in `package.json`) and deploy with the Express framework preset.
 
 On Vercel, the app places SQLite at `/tmp/school-management-demo.db` and seeds demo data when a new instance starts. **This database is temporary and instance-local:** changes can disappear after an instance is recycled and may not be shared across instances. Use only synthetic demo data; do not enter real student or payment data. Persistent use requires migrating to a hosted database.
 
