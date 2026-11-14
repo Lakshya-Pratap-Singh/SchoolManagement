@@ -1,0 +1,122 @@
+openapi: 3.0.3
+info:
+  title: School Management System API
+  version: 1.0.0
+  description: |
+    JSON API. All routes except `/api/health` and `/api/auth/login` need `Authorization: Bearer <token>`.
+    Errors always look like `{ "error": { "message": "...", "details": { "field": "reason" } } }`.
+    Roles: ADMIN (everything), TEACHER (assigned sections/subjects only), GUARDIAN (own children only).
+servers: [{ url: / }]
+security: [{ bearer: [] }]
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: integer } }
+    page: { name: page, in: query, schema: { type: integer, default: 1 } }
+    limit: { name: limit, in: query, schema: { type: integer, default: 10, maximum: 100 } }
+    q: { name: q, in: query, schema: { type: string }, description: Search text }
+    section_id: { name: section_id, in: query, schema: { type: integer } }
+  responses:
+    Error400: { description: Validation failed or business rule violated, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Error401: { description: Missing or invalid token, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Error403: { description: Role or row-level permission denied, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Error404: { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Error409: { description: Conflict (duplicate / in use / invalid state), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Page: { description: Paginated list, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { type: object } }, page: { type: integer }, limit: { type: integer }, total: { type: integer } } } } } }
+    Ok: { description: Success, content: { application/json: { schema: { type: object } } } }
+  schemas:
+    Error: { type: object, properties: { error: { type: object, properties: { message: { type: string }, details: { type: object } } } } }
+    Attendance:
+      type: object
+      required: [section_id, date, session, records]
+      properties:
+        section_id: { type: integer }
+        date: { type: string, format: date }
+        session: { type: string, enum: [MORNING, AFTERNOON] }
+        records:
+          type: array
+          items: { type: object, properties: { student_id: { type: integer }, status: { type: string, enum: [PRESENT, ABSENT, LATE] } } }
+    Student:
+      type: object
+      required: [name, admission_no, section_id, guardian_id]
+      properties: { name: { type: string }, admission_no: { type: string }, section_id: { type: integer }, guardian_id: { type: integer } }
+    NameBody: { type: object, required: [name], properties: { name: { type: string } } }
+paths:
+  /api/health:
+    get: { security: [], summary: Health check, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/auth/login:
+    post:
+      security: []
+      summary: Log in (returns token and user)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '400': { $ref: '#/components/responses/Error400' }, '401': { $ref: '#/components/responses/Error401' } }
+  /api/auth/me:
+    get: { summary: Current user, responses: { '200': { $ref: '#/components/responses/Ok' }, '401': { $ref: '#/components/responses/Error401' } } }
+  /api/classes:
+    get: { summary: List classes, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    post: { summary: Create class (admin), requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/NameBody' } } } }, responses: { '201': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error409' } } }
+  /api/classes/{id}:
+    delete: { summary: Delete class (admin; 409 if in use), parameters: [{ $ref: '#/components/parameters/id' }], responses: { '204': { description: Deleted }, '409': { $ref: '#/components/responses/Error409' } } }
+  /api/subjects:
+    get: { summary: List subjects, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    post: { summary: Create subject (admin), requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/NameBody' } } } }, responses: { '201': { $ref: '#/components/responses/Ok' } } }
+  /api/subjects/{id}:
+    delete: { summary: Delete subject (admin), parameters: [{ $ref: '#/components/parameters/id' }], responses: { '204': { description: Deleted } } }
+  /api/sections:
+    get: { summary: List sections (admin = all, teacher = assigned only), responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    post: { summary: Create section (admin), requestBody: { content: { application/json: { schema: { type: object, properties: { class_id: { type: integer }, name: { type: string } } } } } }, responses: { '201': { $ref: '#/components/responses/Ok' } } }
+  /api/sections/{id}:
+    delete: { summary: Delete section (admin), parameters: [{ $ref: '#/components/parameters/id' }], responses: { '204': { description: Deleted }, '409': { $ref: '#/components/responses/Error409' } } }
+  /api/assignments:
+    get: { summary: List teacher/section/subject assignments (teacher sees own), responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    post: { summary: Assign a teacher to a subject in a section (admin), requestBody: { content: { application/json: { schema: { type: object, properties: { teacher_id: { type: integer }, section_id: { type: integer }, subject_id: { type: integer } } } } } }, responses: { '201': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error409' } } }
+  /api/assignments/{id}:
+    delete: { summary: Remove assignment (admin), parameters: [{ $ref: '#/components/parameters/id' }], responses: { '204': { description: Deleted } } }
+  /api/users:
+    get: { summary: List users with search and pagination (admin), parameters: [{ name: role, in: query, schema: { type: string, enum: [TEACHER, GUARDIAN, ADMIN] } }, { $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }], responses: { '200': { $ref: '#/components/responses/Page' } } }
+    post: { summary: Create teacher or guardian (admin), requestBody: { content: { application/json: { schema: { type: object, properties: { name: { type: string }, email: { type: string }, password: { type: string, minLength: 8 }, role: { type: string, enum: [TEACHER, GUARDIAN] } } } } } }, responses: { '201': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error409' } } }
+  /api/students:
+    get: { summary: List students (admin all; teacher assigned sections; guardian own children), parameters: [{ $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/section_id' }, { $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }], responses: { '200': { $ref: '#/components/responses/Page' } } }
+    post: { summary: Create student (admin), requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Student' } } } }, responses: { '201': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error409' } } }
+  /api/students/{id}:
+    get: { summary: Get one student (403 if not permitted), parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error403' }, '404': { $ref: '#/components/responses/Error404' } } }
+    put: { summary: Update student (admin), parameters: [{ $ref: '#/components/parameters/id' }], requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Student' } } } }, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    delete: { summary: Delete student (admin; 409 if it has records), parameters: [{ $ref: '#/components/parameters/id' }], responses: { '204': { description: Deleted }, '409': { $ref: '#/components/responses/Error409' } } }
+  /api/attendance:
+    post: { summary: "Mark a section's attendance for a date and session. Re-submitting updates, never duplicates (admin / assigned teacher)", requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Attendance' } } } }, responses: { '200': { $ref: '#/components/responses/Ok' }, '400': { $ref: '#/components/responses/Error400' }, '403': { $ref: '#/components/responses/Error403' } } }
+    get: { summary: Existing marks for section/date/session, parameters: [{ $ref: '#/components/parameters/section_id' }, { name: date, in: query, schema: { type: string, format: date } }, { name: session, in: query, schema: { type: string } }], responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error403' } } }
+  /api/attendance/summary:
+    get: { summary: Class attendance summary per student, parameters: [{ $ref: '#/components/parameters/section_id' }, { name: from, in: query, schema: { type: string, format: date } }, { name: to, in: query, schema: { type: string, format: date } }], responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error403' } } }
+  /api/students/{id}/attendance:
+    get: { summary: Student attendance summary and recent records, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error403' } } }
+  /api/grading-rules:
+    get: { summary: List grading rules, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    put: { summary: Replace grading rules (admin). One rule must start at 0%, requestBody: { content: { application/json: { schema: { type: object, properties: { rules: { type: array, items: { type: object, properties: { min_percent: { type: number }, grade: { type: string } } } } } } } } }, responses: { '200': { $ref: '#/components/responses/Ok' }, '400': { $ref: '#/components/responses/Error400' } } }
+  /api/exams:
+    get: { summary: List exams (admin all; teacher only for assigned section and subject), parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }], responses: { '200': { $ref: '#/components/responses/Page' } } }
+    post: { summary: Create exam (admin), requestBody: { content: { application/json: { schema: { type: object, properties: { name: { type: string }, section_id: { type: integer }, subject_id: { type: integer }, total_marks: { type: integer }, exam_date: { type: string, format: date } } } } } }, responses: { '201': { $ref: '#/components/responses/Ok' } } }
+  /api/exams/{id}/results:
+    get: { summary: Marks sheet with percent and computed grade, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error403' } } }
+    put: { summary: Enter or update marks (admin / teacher assigned to that section and subject), parameters: [{ $ref: '#/components/parameters/id' }], requestBody: { content: { application/json: { schema: { type: object, properties: { results: { type: array, items: { type: object, properties: { student_id: { type: integer }, marks: { type: number } } } } } } } } }, responses: { '200': { $ref: '#/components/responses/Ok' }, '400': { $ref: '#/components/responses/Error400' }, '403': { $ref: '#/components/responses/Error403' } } }
+  /api/students/{id}/report-card:
+    get: { summary: Student report card (subjects, totals, overall grade), parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error403' } } }
+  /api/invoices:
+    get: { summary: List invoices with derived paid/outstanding/status (admin all; guardian own children), parameters: [{ name: student_id, in: query, schema: { type: integer } }, { name: status, in: query, schema: { type: string, enum: [UNPAID, PARTIAL, PAID] } }, { $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }], responses: { '200': { $ref: '#/components/responses/Page' }, '403': { $ref: '#/components/responses/Error403' } } }
+    post: { summary: Create invoice (admin), requestBody: { content: { application/json: { schema: { type: object, properties: { student_id: { type: integer }, title: { type: string }, amount: { type: integer }, due_date: { type: string, format: date } } } } } }, responses: { '201': { $ref: '#/components/responses/Ok' } } }
+  /api/invoices/{id}:
+    get: { summary: Invoice with its payment ledger, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error403' } } }
+  /api/invoices/{id}/payments:
+    post:
+      summary: Simulated payment (admin or the student's guardian). Idempotent by idempotency_key; overpayment gives 400; paying a fully paid invoice gives 409.
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      requestBody: { content: { application/json: { schema: { type: object, required: [amount, idempotency_key], properties: { amount: { type: integer }, idempotency_key: { type: string, minLength: 8 } } } } } }
+      responses: { '201': { description: Payment recorded }, '200': { description: Same key replayed - the original payment is returned }, '400': { $ref: '#/components/responses/Error400' }, '403': { $ref: '#/components/responses/Error403' }, '409': { $ref: '#/components/responses/Error409' } }
+  /api/dashboard:
+    get: { summary: Counts, today's attendance and fee reconciliation (admin), responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/reports/fees:
+    get: { summary: Fee report per student plus reconciled totals (admin), parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }], responses: { '200': { $ref: '#/components/responses/Page' } } }
+  /api/reports/academic:
+    get: { summary: Average score per exam (admin), responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/audit-logs:
+    get: { summary: Audit trail, newest first (admin), parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }], responses: { '200': { $ref: '#/components/responses/Page' } } }
