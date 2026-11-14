@@ -14,8 +14,16 @@ function createApp(db) {
   app.post('/api/auth/login', (req, res) => {
     const { email, password } = validate(req.body, { email: 'email', password: 'string' });
     const u = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
-    const ok = compare(password, u ? u.password_hash : DUMMY_HASH);
-    if (!u || !ok) throw new HttpError(401, 'Invalid email or password');
+    const student = u ? null : db.prepare(`
+      SELECT s.id, s.name, a.email, a.password_hash
+      FROM student_accounts a JOIN students s ON s.id = a.student_id WHERE a.email = ?`).get(email.toLowerCase());
+    const account = u || student;
+    const ok = compare(password, account ? account.password_hash : DUMMY_HASH);
+    if (!account || !ok) throw new HttpError(401, 'Invalid email or password');
+    if (student) {
+      const user = { id: student.id, student_id: student.id, name: student.name, email: student.email, role: 'STUDENT' };
+      return res.json({ token: sign(user), user });
+    }
     res.json({ token: sign(u), user: { id: u.id, name: u.name, email: u.email, role: u.role } });
   });
 
@@ -27,6 +35,7 @@ function createApp(db) {
   app.use('/api', require('./routes/exams')(db));
   app.use('/api', require('./routes/fees')(db));
   app.use('/api', require('./routes/reports')(db));
+  app.use('/api', require('./routes/timetable')(db));
   app.use('/api', (req, _res, next) => next(new HttpError(404, `No route for ${req.method} ${req.path}`)));
 
   // API docs (Swagger UI loaded from a CDN in the browser; nothing to install).

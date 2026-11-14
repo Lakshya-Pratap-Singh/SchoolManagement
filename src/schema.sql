@@ -36,6 +36,19 @@ CREATE TABLE IF NOT EXISTS assignments (
 );
 CREATE INDEX IF NOT EXISTS idx_assign_teacher ON assignments(teacher_id);
 
+CREATE TABLE IF NOT EXISTS timetable_entries (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  section_id    INTEGER NOT NULL REFERENCES sections(id),
+  assignment_id INTEGER NOT NULL REFERENCES assignments(id),
+  weekday       TEXT NOT NULL CHECK (weekday IN ('MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY')),
+  period        INTEGER NOT NULL CHECK (period BETWEEN 1 AND 6),
+  start_time    TEXT NOT NULL,
+  end_time      TEXT NOT NULL,
+  CHECK (start_time < end_time),
+  UNIQUE (section_id, weekday, period)
+);
+CREATE INDEX IF NOT EXISTS idx_timetable_section_day ON timetable_entries(section_id, weekday, period);
+
 CREATE TABLE IF NOT EXISTS students (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   name         TEXT NOT NULL,
@@ -45,6 +58,13 @@ CREATE TABLE IF NOT EXISTS students (
 );
 CREATE INDEX IF NOT EXISTS idx_students_section  ON students(section_id);
 CREATE INDEX IF NOT EXISTS idx_students_guardian ON students(guardian_id);
+
+CREATE TABLE IF NOT EXISTS student_accounts (
+  student_id   INTEGER PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE,
+  email        TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 CREATE TABLE IF NOT EXISTS attendance (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -49,6 +49,18 @@ function table(caption, cols, rows, emptyMsg = 'Nothing here yet.') {
   return `<div class="table-wrap"><table><caption>${esc(caption)}</caption><thead><tr>${cols.map((c) => `<th scope="col" class="${c.cls || ''}">${esc(c.h)}</th>`).join('')}</tr></thead>
     <tbody>${rows.map((r) => `<tr>${cols.map((c) => `<td class="${c.cls || ''}">${c.f(r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
+const WEEKDAYS = [['MONDAY', 'Monday'], ['TUESDAY', 'Tuesday'], ['WEDNESDAY', 'Wednesday'], ['THURSDAY', 'Thursday'], ['FRIDAY', 'Friday']];
+function timetableGrid(entries, editable = false) {
+  if (!entries.length) return '<p class="empty">No timetable entries published yet.</p>';
+  const slots = new Map(entries.map((entry) => [`${entry.weekday}-${entry.period}`, entry]));
+  const content = (entry) => {
+    if (!entry) return '<span class="free-period">—</span>';
+    return `<div class="timetable-slot"><strong>${esc(entry.subject_name)}</strong><span>${esc(entry.start_time)}–${esc(entry.end_time)}</span><small>${esc(entry.teacher_name)}</small>
+      ${editable ? `<div class="slot-actions"><button class="secondary small" data-edit-slot="${entry.id}">Edit</button><button class="danger small" data-delete-slot="${entry.id}">Delete</button></div>` : ''}</div>`;
+  };
+  return `<div class="table-wrap timetable-wrap"><table class="timetable"><caption>Weekly timetable</caption><thead><tr><th scope="col">Period</th>${WEEKDAYS.map(([, day]) => `<th scope="col">${day}</th>`).join('')}</tr></thead>
+    <tbody>${Array.from({ length: 6 }, (_, index) => `<tr><th scope="row">Period ${index + 1}</th>${WEEKDAYS.map(([day]) => `<td>${content(slots.get(`${day}-${index + 1}`))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
 const pager = (p) => `<div class="pager"><button class="secondary small" data-page="${p.page - 1}" ${p.page <= 1 ? 'disabled' : ''}>Previous</button>
   <span>Page ${p.page} of ${Math.max(1, Math.ceil(p.total / p.limit))} · ${p.total} total</span>
   <button class="secondary small" data-page="${p.page + 1}" ${p.page * p.limit >= p.total ? 'disabled' : ''}>Next</button></div>`;
@@ -63,7 +75,8 @@ function logout(msg) {
 $('#logout').onclick = () => logout();
 
 const DEMO = [['Admin', 'admin@school.test', 'Admin@123'], ['Teacher (Class 5-A only)', 'asha.teacher@school.test', 'Teacher@123'],
-  ['Teacher (5-A and 5-B)', 'ravi.teacher@school.test', 'Teacher@123'], ['Guardian Meera', 'meera.guardian@school.test', 'Guardian@123'], ['Guardian Arjun', 'arjun.guardian@school.test', 'Guardian@123']];
+  ['Teacher (5-A and 5-B)', 'ravi.teacher@school.test', 'Teacher@123'], ['Guardian Meera', 'meera.guardian@school.test', 'Guardian@123'],
+  ['Guardian Arjun', 'arjun.guardian@school.test', 'Guardian@123'], ['Student Aarav', 'aarav.student@school.test', 'Student@123']];
 
 function viewLogin() {
   $('#top').hidden = true; $('#tabs').hidden = true;
@@ -83,9 +96,10 @@ function viewLogin() {
 }
 
 const TABS = {
-  ADMIN: [['Dashboard', viewDashboard], ['Students', viewStudents], ['People', viewPeople], ['Structure', viewStructure], ['Attendance', viewAttendance], ['Exams', viewExams], ['Fees', viewFees], ['Audit log', viewAudit]],
-  TEACHER: [['Attendance', viewAttendance], ['Exams & marks', viewExams]],
-  GUARDIAN: [['My children', viewChildren]]
+  ADMIN: [['Dashboard', viewDashboard], ['Students', viewStudents], ['People', viewPeople], ['Structure', viewStructure], ['Timetable', viewTimetable], ['Attendance', viewAttendance], ['Exams', viewExams], ['Fees', viewFees], ['Audit log', viewAudit]],
+  TEACHER: [['Attendance', viewAttendance], ['Exams & marks', viewExams], ['Timetable', viewTeacherTimetable]],
+  GUARDIAN: [['My children', viewChildren]],
+  STUDENT: [['My portal', viewChildren]]
 };
 function start() {
   if (!state.token) return viewLogin();
@@ -126,6 +140,8 @@ async function viewStudents(root) {
     <div><label for="n">Name</label><input id="n" name="name" required></div><div><label for="a">Admission no.</label><input id="a" name="admission_no" required></div>
     <div><label for="s">Section</label><select id="s" name="section_id">${options(secs.data, 'id', 'label')}</select></div>
     <div><label for="g">Guardian</label><select id="g" name="guardian_id">${options(guardians.data, 'id', 'name')}</select></div>
+    <div><label for="studentEmail">Student login email (optional)</label><input id="studentEmail" name="student_login_email" type="email" autocomplete="off"></div>
+    <div><label for="studentPassword">Initial / new password</label><input id="studentPassword" name="student_login_password" type="password" minlength="8" autocomplete="new-password"></div>
     <button type="submit">Add</button><button type="button" class="secondary" id="cancelStudentEdit" hidden>Cancel edit</button></div></form></section>
     <section class="card"><form id="flt" class="row"><div><label for="q">Search name / admission no.</label><input id="q" name="q" type="search"></div>
     <div><label for="fs">Section</label><select id="fs" name="section_id"><option value="">All</option>${options(secs.data, 'id', 'label')}</select></div><button type="submit" class="secondary">Filter</button></form><div id="list"></div></section>`;
@@ -137,7 +153,11 @@ async function viewStudents(root) {
       { h: '', f: (s) => `<button class="secondary small" data-edit-student="${s.id}">Edit</button> <button class="danger small" data-del="${s.id}" aria-label="Delete ${esc(s.name)}">Delete</button>` }], r.data, 'No students match.') + pager(r);
   });
   form(root, '#add', async (v, el) => {
-    const body = { name: v.name, admission_no: v.admission_no, section_id: +v.section_id, guardian_id: +v.guardian_id };
+    const body = {
+      name: v.name, admission_no: v.admission_no, section_id: +v.section_id, guardian_id: +v.guardian_id,
+      student_login_email: v.student_login_email, student_login_password: v.student_login_password
+    };
+    if (!editingStudent && body.student_login_email && !body.student_login_password) throw new Error('An initial password is required for a student login');
     await api(editingStudent ? 'PUT' : 'POST', editingStudent ? `/students/${editingStudent.id}` : '/students', body);
     flash(editingStudent ? 'Student updated' : 'Student added'); el.reset(); editingStudent = null;
     $('#add button[type=submit]', root).textContent = 'Add'; $('#cancelStudentEdit', root).hidden = true;
@@ -151,6 +171,7 @@ async function viewStudents(root) {
       const s = await api('GET', '/students/' + edit.dataset.editStudent);
       editingStudent = s; $('#n', root).value = s.name; $('#a', root).value = s.admission_no;
       $('#s', root).value = s.section_id; $('#g', root).value = s.guardian_id;
+      $('#studentEmail', root).value = s.student_login_email || ''; $('#studentPassword', root).value = '';
       $('#add button[type=submit]', root).textContent = 'Save changes'; $('#cancelStudentEdit', root).hidden = false;
       $('#add', root).scrollIntoView({ behavior: 'smooth' });
     });
@@ -240,6 +261,89 @@ async function viewStructure(root) {
   };
   root.onclick = (e) => { const d = e.target.closest('[data-del]'); if (d && confirm('Delete this item?')) run(async () => { await api('DELETE', '/' + d.dataset.del); flash('Deleted'); draw(); }); };
   await draw();
+}
+
+// ---------- timetable ----------
+async function viewTimetable(root) {
+  const [sections, assignments] = await Promise.all([
+    api('GET', '/sections'),
+    api('GET', '/assignments')
+  ]);
+  if (!sections.data.length) { root.innerHTML = '<p class="empty">Create a section before building its timetable.</p>'; return; }
+  let editingSlot = null;
+  root.innerHTML = `<section class="card"><h2>Manage timetable</h2><form id="timetableForm"><div class="row">
+    <div><label for="scheduleSection">Section</label><select id="scheduleSection" name="section_id">${options(sections.data, 'id', 'label')}</select></div>
+    <div><label for="scheduleDay">Day</label><select id="scheduleDay" name="weekday">${WEEKDAYS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></div>
+    <div><label for="schedulePeriod">Period</label><select id="schedulePeriod" name="period">${Array.from({ length: 6 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('')}</select></div>
+    <div><label for="scheduleAssignment">Subject and teacher</label><select id="scheduleAssignment" name="assignment_id" required></select></div>
+    <div><label for="scheduleStart">Starts</label><input id="scheduleStart" name="start_time" type="time" value="08:00" required></div>
+    <div><label for="scheduleEnd">Ends</label><input id="scheduleEnd" name="end_time" type="time" value="08:45" required></div>
+    <button type="submit">Add period</button><button type="button" class="secondary" id="cancelSlotEdit" hidden>Cancel edit</button>
+    </div></form><p class="hint">A section or teacher cannot have overlapping timetable times.</p></section>
+    <section class="card"><div id="weeklySchedule"></div></section>`;
+  const section = $('#scheduleSection', root);
+  const assignment = $('#scheduleAssignment', root);
+  const schedule = $('#weeklySchedule', root);
+  let entries = [];
+  const setAssignments = (sectionId, selectedId) => {
+    const matching = assignments.data.filter((a) => String(a.section_id) === String(sectionId));
+    assignment.innerHTML = options(matching, 'id', (a) => `${a.subject_name} — ${a.teacher_name}`, selectedId);
+  };
+  const load = () => run(async () => {
+    schedule.innerHTML = '<p class="loading">Loading timetable…</p>';
+    entries = (await api('GET', `/timetable?section_id=${section.value}`)).data;
+    schedule.innerHTML = timetableGrid(entries, true);
+  });
+  setAssignments(section.value);
+  section.onchange = () => { setAssignments(section.value); load(); };
+  form(root, '#timetableForm', async (v, el) => {
+    const body = { ...v, section_id: +v.section_id, assignment_id: +v.assignment_id, period: +v.period };
+    await api(editingSlot ? 'PUT' : 'POST', editingSlot ? `/timetable/${editingSlot.id}` : '/timetable', body);
+    flash(editingSlot ? 'Timetable period updated' : 'Timetable period added');
+    editingSlot = null; el.reset(); $('#scheduleStart', root).value = '08:00'; $('#scheduleEnd', root).value = '08:45';
+    $('#timetableForm button[type=submit]', root).textContent = 'Add period'; $('#cancelSlotEdit', root).hidden = true;
+    setAssignments(section.value); load();
+  });
+  root.onclick = (event) => {
+    const edit = event.target.closest('[data-edit-slot]');
+    if (edit) {
+      const entry = entries.find((item) => item.id === Number(edit.dataset.editSlot));
+      if (!entry) return;
+      editingSlot = entry;
+      section.value = String(entry.section_id); setAssignments(section.value, entry.assignment_id);
+      $('#scheduleDay', root).value = entry.weekday; $('#schedulePeriod', root).value = String(entry.period);
+      $('#scheduleStart', root).value = entry.start_time; $('#scheduleEnd', root).value = entry.end_time;
+      $('#timetableForm button[type=submit]', root).textContent = 'Save period'; $('#cancelSlotEdit', root).hidden = false;
+      $('#timetableForm', root).scrollIntoView({ behavior: 'smooth' });
+    }
+    const del = event.target.closest('[data-delete-slot]');
+    if (del && confirm('Delete this timetable period?')) {
+      run(async () => { await api('DELETE', '/timetable/' + del.dataset.deleteSlot); flash('Timetable period deleted'); load(); });
+    }
+  };
+  $('#cancelSlotEdit', root).onclick = () => {
+    editingSlot = null; $('#timetableForm', root).reset();
+    $('#scheduleStart', root).value = '08:00'; $('#scheduleEnd', root).value = '08:45';
+    $('#timetableForm button[type=submit]', root).textContent = 'Add period'; $('#cancelSlotEdit', root).hidden = true;
+    setAssignments(section.value);
+  };
+  load();
+}
+
+async function viewTeacherTimetable(root) {
+  const sections = (await api('GET', '/sections')).data;
+  if (!sections.length) { root.innerHTML = '<p class="empty">No assigned sections yet.</p>'; return; }
+  root.innerHTML = `<section class="card"><div class="row"><div><label for="teacherScheduleSection">Assigned section</label>
+    <select id="teacherScheduleSection">${options(sections, 'id', 'label')}</select></div></div></section><section class="card"><div id="weeklySchedule"></div></section>`;
+  const section = $('#teacherScheduleSection', root);
+  const schedule = $('#weeklySchedule', root);
+  const load = () => run(async () => {
+    schedule.innerHTML = '<p class="loading">Loading timetable…</p>';
+    const entries = (await api('GET', `/timetable?section_id=${section.value}`)).data;
+    schedule.innerHTML = timetableGrid(entries);
+  });
+  section.onchange = load;
+  load();
 }
 
 // ---------- attendance (admin + teacher) ----------
@@ -339,10 +443,10 @@ async function invoicePanel(host, id, onChange) {
     flash(r.replayed ? 'This payment was already recorded' : 'Payment recorded'); onChange(); invoicePanel(host, id, onChange);
   });
 }
-function invoiceTable(rows, withStudent = true) {
+function invoiceTable(rows, withStudent = true, allowPay = true) {
   return table('Invoices', [...(withStudent ? [{ h: 'Student', f: (i) => esc(i.student_name) }] : []), { h: 'Title', f: (i) => esc(i.title) }, { h: 'Due', f: (i) => esc(i.due_date) }, { h: 'Amount', cls: 'num', f: (i) => money(i.amount) },
     { h: 'Paid', cls: 'num', f: (i) => money(i.paid) }, { h: 'Outstanding', cls: 'num', f: (i) => money(i.outstanding) }, { h: 'Status', f: (i) => pill(i.status) },
-    { h: '', f: (i) => `<button class="small" data-inv="${i.id}">${i.outstanding > 0 ? 'Ledger / pay' : 'Ledger'}</button>` }], rows, 'No invoices.');
+    ...(allowPay ? [{ h: '', f: (i) => `<button class="small" data-inv="${i.id}">${i.outstanding > 0 ? 'Ledger / pay' : 'Ledger'}</button>` }] : [])], rows, 'No invoices.');
 }
 async function viewFees(root) {
   const studs = (await api('GET', '/students?limit=100')).data;
@@ -376,23 +480,32 @@ async function viewAudit(root) {
 
 // ---------- guardian ----------
 async function viewChildren(root) {
+  const isStudent = state.user.role === 'STUDENT';
   const kids = (await api('GET', '/students?limit=100')).data;
-  if (!kids.length) { root.innerHTML = '<p class="empty">No students are linked to your account.</p>'; return; }
-  root.innerHTML = `<section class="card"><div class="row"><div><label for="kid">Child</label><select id="kid">${options(kids, 'id', (k) => `${k.name} — ${k.section_label}`)}</select></div></div></section><div id="detail"></div>`;
+  if (!kids.length) { root.innerHTML = `<p class="empty">${isStudent ? 'Student profile is not linked to this account.' : 'No students are linked to your account.'}</p>`; return; }
+  root.innerHTML = `${isStudent ? '' : `<section class="card"><div class="row"><div><label for="kid">Child</label><select id="kid">${options(kids, 'id', (k) => `${k.name} — ${k.section_label}`)}</select></div></div></section>`}<div id="detail"></div>`;
   const detail = $('#detail', root);
   const show = (id) => run(async () => {
     detail.innerHTML = '<p class="loading">Loading…</p>';
-    const [att, rc, inv] = await Promise.all([api('GET', `/students/${id}/attendance`), api('GET', `/students/${id}/report-card`), api('GET', `/invoices?student_id=${id}&limit=50`)]);
+    const [profile, att, rc, inv, schedule] = await Promise.all([
+      api('GET', `/students/${id}`), api('GET', `/students/${id}/attendance`), api('GET', `/students/${id}/report-card`),
+      api('GET', `/invoices?student_id=${id}&limit=50`), api('GET', `/timetable?section_id=${kids.find((kid) => kid.id === Number(id)).section_id}`)
+    ]);
     const s = att.summary;
-    detail.innerHTML = `<section class="card"><h2>Attendance</h2><p>${s.total ? `Present ${s.present} · Late ${s.late} · Absent ${s.absent} · <strong>${s.percent}%</strong> attended` : 'No attendance recorded yet.'}</p>
+    detail.innerHTML = `${isStudent ? `<section class="card student-profile"><div><span class="muted">STUDENT PROFILE</span><h2>${esc(profile.name)}</h2><p>${esc(profile.class_name)} — Section ${esc(profile.section_name)} · Admission ${esc(profile.admission_no)}</p></div></section>` : ''}
+      <section class="card"><h2>Attendance</h2><p>${s.total ? `Present ${s.present} · Late ${s.late} · Absent ${s.absent} · <strong>${s.percent}%</strong> attended` : 'No attendance recorded yet.'}</p>
       ${table('Recent attendance', [{ h: 'Date', f: (r) => esc(r.date) }, { h: 'Session', f: (r) => esc(r.session) }, { h: 'Status', f: (r) => pill(r.status) }], att.records.slice(0, 10), 'No records.')}</section>
       <section class="card"><h2>Report card</h2>${table('Results', [{ h: 'Exam', f: (r) => esc(r.exam) }, { h: 'Subject', f: (r) => esc(r.subject) }, { h: 'Marks', cls: 'num', f: (r) => `${r.marks} / ${r.total_marks}` }, { h: '%', cls: 'num', f: (r) => r.percent }, { h: 'Grade', f: (r) => esc(r.grade) }], rc.subjects, 'No results published yet.')}
       ${rc.subjects.length ? `<p><strong>Overall: ${rc.overall.obtained} / ${rc.overall.total} (${rc.overall.percent}%) — Grade ${esc(rc.overall.grade)}</strong></p>` : ''}</section>
-      <section class="card"><h2>Fees</h2>${invoiceTable(inv.data, false)}</section><section class="card" id="panel" hidden></section>`;
-    detail.onclick = (e) => { const i = e.target.closest('[data-inv]'); if (i) run(() => invoicePanel($('#panel', detail), i.dataset.inv, () => show(id))); };
+      <section class="card"><h2>Timetable</h2>${timetableGrid(schedule.data)}</section>
+      <section class="card"><h2>Fees</h2>${invoiceTable(inv.data, false, !isStudent)}</section>${isStudent ? '' : '<section class="card" id="panel" hidden></section>'}`;
+    detail.onclick = (e) => {
+      const i = e.target.closest('[data-inv]');
+      if (!isStudent && i) run(() => invoicePanel($('#panel', detail), i.dataset.inv, () => show(id)));
+    };
   });
-  $('#kid', root).onchange = (e) => show(e.target.value);
-  show(kids[0].id);
+  if (!isStudent) $('#kid', root).onchange = (e) => show(e.target.value);
+  show(isStudent ? state.user.student_id : kids[0].id);
 }
 
 start();

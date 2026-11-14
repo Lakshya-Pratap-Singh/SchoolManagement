@@ -12,7 +12,16 @@ function authenticate(db) {
     const h = req.headers.authorization || '';
     if (!h.startsWith('Bearer ')) return next(new HttpError(401, 'Authentication required'));
     try {
-      const { id } = jwt.verify(h.slice(7), secret());
+      const { id, role } = jwt.verify(h.slice(7), secret());
+      if (role === 'STUDENT') {
+        const student = db.prepare(`
+          SELECT s.id, s.id AS student_id, s.name, a.email, 'STUDENT' AS role
+          FROM student_accounts a JOIN students s ON s.id = a.student_id
+          WHERE a.student_id = ?`).get(id);
+        if (!student) return next(new HttpError(401, 'Student account no longer exists'));
+        req.user = student;
+        return next();
+      }
       const user = db.prepare('SELECT id, name, email, role FROM users WHERE id = ?').get(id);
       if (!user) return next(new HttpError(401, 'User no longer exists'));
       req.user = user;

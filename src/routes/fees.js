@@ -10,7 +10,9 @@ module.exports = (db) => {
   const loadInvoice = (user, id) => {
     const inv = db.prepare(`SELECT i.*, s.name AS student_name, s.guardian_id FROM invoices i JOIN students s ON s.id = i.student_id WHERE i.id = ?`).get(id);
     if (!inv) throw notFound('Invoice not found');
-    if (user.role === 'ADMIN' || (user.role === 'GUARDIAN' && inv.guardian_id === user.id)) return inv;
+    if (user.role === 'ADMIN' ||
+      (user.role === 'GUARDIAN' && inv.guardian_id === user.id) ||
+      (user.role === 'STUDENT' && inv.student_id === user.student_id)) return inv;
     throw forbidden('You cannot access this invoice');
   };
 
@@ -23,11 +25,12 @@ module.exports = (db) => {
     res.status(201).json(invoiceWithBalance(db, loadInvoice(req.user, Number(id))));
   });
 
-  r.get('/invoices', requireRole('ADMIN', 'GUARDIAN'), (req, res) => {
+  r.get('/invoices', requireRole('ADMIN', 'GUARDIAN', 'STUDENT'), (req, res) => {
     const { page, limit, offset } = paginate(req.query);
     const where = [];
     const params = [];
     if (req.user.role === 'GUARDIAN') { where.push('s.guardian_id = ?'); params.push(req.user.id); }
+    if (req.user.role === 'STUDENT') { where.push('s.id = ?'); params.push(req.user.student_id); }
     if (req.query.student_id) { where.push('i.student_id = ?'); params.push(Number(req.query.student_id)); }
     const outer = [];
     if (['PAID', 'PARTIAL', 'UNPAID'].includes(req.query.status)) { outer.push('status = ?'); params.push(req.query.status); }
@@ -42,7 +45,7 @@ module.exports = (db) => {
     res.json({ data, page, limit, total });
   });
 
-  r.get('/invoices/:id', requireRole('ADMIN', 'GUARDIAN'), (req, res) => {
+  r.get('/invoices/:id', requireRole('ADMIN', 'GUARDIAN', 'STUDENT'), (req, res) => {
     const inv = loadInvoice(req.user, Number(req.params.id));
     const ledger = db.prepare('SELECT id, amount, method, paid_at FROM payments WHERE invoice_id = ? ORDER BY id').all(inv.id);
     res.json({ ...invoiceWithBalance(db, inv), ledger });

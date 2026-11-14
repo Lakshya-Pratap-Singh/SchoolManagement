@@ -5,7 +5,7 @@ info:
   description: |
     JSON API. All routes except `/api/health` and `/api/auth/login` need `Authorization: Bearer <token>`.
     Errors always look like `{ "error": { "message": "...", "details": { "field": "reason" } } }`.
-    Roles: ADMIN (everything), TEACHER (assigned sections/subjects only), GUARDIAN (own children only).
+    Roles: ADMIN (management), TEACHER (assigned sections/subjects only), GUARDIAN (own children only), STUDENT (own linked record only).
 servers: [{ url: / }]
 security: [{ bearer: [] }]
 components:
@@ -40,7 +40,23 @@ components:
     Student:
       type: object
       required: [name, admission_no, section_id, guardian_id]
-      properties: { name: { type: string }, admission_no: { type: string }, section_id: { type: integer }, guardian_id: { type: integer } }
+      properties:
+        name: { type: string }
+        admission_no: { type: string }
+        section_id: { type: integer }
+        guardian_id: { type: integer }
+        student_login_email: { type: string, format: email, description: Optional student sign-in email }
+        student_login_password: { type: string, minLength: 8, description: Required when creating a student login; optional on update }
+    TimetableEntry:
+      type: object
+      required: [section_id, assignment_id, weekday, period, start_time, end_time]
+      properties:
+        section_id: { type: integer }
+        assignment_id: { type: integer }
+        weekday: { type: string, enum: [MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY] }
+        period: { type: integer, minimum: 1, maximum: 6 }
+        start_time: { type: string, example: '08:00' }
+        end_time: { type: string, example: '08:45' }
     NameBody: { type: object, required: [name], properties: { name: { type: string } } }
 paths:
   /api/health:
@@ -87,8 +103,8 @@ paths:
       parameters: [{ $ref: '#/components/parameters/id' }]
       responses: { '204': { description: Deleted }, '404': { $ref: '#/components/responses/Error404' }, '409': { $ref: '#/components/responses/Error409' } }
   /api/students:
-    get: { summary: List students (admin all; teacher assigned sections; guardian own children), parameters: [{ $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/section_id' }, { $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }], responses: { '200': { $ref: '#/components/responses/Page' } } }
-    post: { summary: Create student (admin), requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Student' } } } }, responses: { '201': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error409' } } }
+    get: { summary: List students (admin all; teacher assigned sections; guardian children; student self only), parameters: [{ $ref: '#/components/parameters/q' }, { $ref: '#/components/parameters/section_id' }, { $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }], responses: { '200': { $ref: '#/components/responses/Page' } } }
+    post: { summary: Create student (admin; optional linked student login), requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Student' } } } }, responses: { '201': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error409' } } }
   /api/students/{id}:
     get: { summary: Get one student (403 if not permitted), parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error403' }, '404': { $ref: '#/components/responses/Error404' } } }
     put: { summary: Update student (admin), parameters: [{ $ref: '#/components/parameters/id' }], requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Student' } } } }, responses: { '200': { $ref: '#/components/responses/Ok' } } }
@@ -98,6 +114,25 @@ paths:
     get: { summary: Existing marks for section/date/session, parameters: [{ $ref: '#/components/parameters/section_id' }, { name: date, in: query, schema: { type: string, format: date } }, { name: session, in: query, schema: { type: string } }], responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error403' } } }
   /api/attendance/summary:
     get: { summary: Class attendance summary per student, parameters: [{ $ref: '#/components/parameters/section_id' }, { name: from, in: query, schema: { type: string, format: date } }, { name: to, in: query, schema: { type: string, format: date } }], responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error403' } } }
+  /api/timetable:
+    get:
+      summary: Read timetable (admin all; teacher assigned periods; guardian children's sections; student own section)
+      parameters: [{ $ref: '#/components/parameters/section_id' }]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error403' } }
+    post:
+      summary: Add timetable period (admin; section and teacher assignment must match; teacher conflicts rejected)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TimetableEntry' } } } }
+      responses: { '201': { $ref: '#/components/responses/Ok' }, '400': { $ref: '#/components/responses/Error400' }, '403': { $ref: '#/components/responses/Error403' }, '409': { $ref: '#/components/responses/Error409' } }
+  /api/timetable/{id}:
+    put:
+      summary: Update timetable period (admin; teacher conflicts rejected)
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TimetableEntry' } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '400': { $ref: '#/components/responses/Error400' }, '404': { $ref: '#/components/responses/Error404' }, '409': { $ref: '#/components/responses/Error409' } }
+    delete:
+      summary: Delete timetable period (admin)
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      responses: { '204': { description: Deleted }, '404': { $ref: '#/components/responses/Error404' } }
   /api/students/{id}/attendance:
     get: { summary: Student attendance summary and recent records, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error403' } } }
   /api/grading-rules:

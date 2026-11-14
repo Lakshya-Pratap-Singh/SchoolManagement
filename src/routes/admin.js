@@ -1,7 +1,7 @@
 // Academic administration: classes, sections, subjects, assignments, users (teachers/guardians), students.
 const express = require('express');
 const { requireRole, hash } = require('../auth');
-const { validate, paginate, audit, notFound, bad } = require('../util');
+const { validate, paginate, audit, notFound, bad, conflict } = require('../util');
 const { teacherSectionIds, getStudentFor } = require('../access');
 
 module.exports = (db) => {
@@ -91,6 +91,9 @@ module.exports = (db) => {
   r.post('/users', admin, (req, res) => {
     const v = validate(req.body, { name: 'string', email: 'email', role: ['TEACHER', 'GUARDIAN'] });
     if (typeof req.body.password !== 'string' || req.body.password.length < 8) throw bad('Validation failed', { password: 'min 8 characters' });
+    if (db.prepare('SELECT 1 FROM student_accounts WHERE email=?').get(v.email.toLowerCase())) {
+      throw conflict('This email is already used by a student account');
+    }
     const id = db.prepare('INSERT INTO users (name, email, password_hash, role, phone) VALUES (?,?,?,?,?)')
       .run(v.name, v.email.toLowerCase(), hash(req.body.password), v.role, req.body.phone || null).lastInsertRowid;
     audit(db, req.user, 'CREATE', 'users', id, { email: v.email, role: v.role });
@@ -104,6 +107,9 @@ module.exports = (db) => {
     const password = req.body.password;
     if (password !== undefined && password !== '' && (typeof password !== 'string' || password.length < 8)) {
       throw bad('Validation failed', { password: 'min 8 characters' });
+    }
+    if (db.prepare('SELECT 1 FROM student_accounts WHERE email=?').get(v.email.toLowerCase())) {
+      throw conflict('This email is already used by a student account');
     }
     if (password) {
       db.prepare('UPDATE users SET name=?, email=?, password_hash=? WHERE id=?')
@@ -129,6 +135,7 @@ module.exports = (db) => {
     const where = [];
     const params = [];
     if (req.user.role === 'GUARDIAN') { where.push('s.guardian_id = ?'); params.push(req.user.id); }
+    if (req.user.role === 'STUDENT') { where.push('s.id = ?'); params.push(req.user.student_id); }
     if (req.user.role === 'TEACHER') {
       const ids = teacherSectionIds(db, req.user.id);
       if (!ids.length) return res.json({ data: [], page, limit, total: 0 });
@@ -145,26 +152,71 @@ module.exports = (db) => {
       .all(...params, limit, offset);
     res.json({ data, page, limit, total });
   });
-  r.get('/students/:id', (req, res) => res.json(getStudentFor(db, req.user, Number(req.params.id))));
+  r.get('/students/:id', (req, res) => {
+    const student = getStudentFor(db, req.user, Number(req.params.id));
+    if (req.user.role === 'ADMIN') {
+      student.student_login_email = db.prepare('SELECT email FROM student_accounts WHERE student_id=?').get(student.id)?.email ?? null;
+    }
+    res.json(student);
+  });
   const studentRules = { name: 'string', admission_no: 'string', section_id: 'int+', guardian_id: 'int+' };
   const checkGuardian = (id) => {
     if (!db.prepare("SELECT 1 FROM users WHERE id = ? AND role = 'GUARDIAN'").get(id)) throw bad('guardian_id must be a guardian');
   };
+  const saveStudentLogin = (studentId, body) => {
+    const current = db.prepare('SELECT email FROM student_accounts WHERE student_id=?').get(studentId);
+    const requestedEmail = body.student_login_email;
+    const password = body.student_login_password;
+    if ((requestedEmail === undefined || requestedEmail === '') && (password === undefined || password === '')) return;
+    const email = requestedEmail === undefined || requestedEmail === '' ? current?.email : requestedEmail;
+    if (typeof email !== 'string') throw bad('A student login email is required');
+    const normalizedEmail = validate({ email }, { email: 'email' }).email.toLowerCase();
+    if (password !== undefined && password !== '' && (typeof password !== 'string' || password.length < 8)) {
+      throw bad('Validation failed', { student_login_password: 'min 8 characters' });
+    }
+    if (!current && (typeof password !== 'string' || password.length < 8)) {
+      throw bad('Validation failed', { student_login_password: 'required and must be at least 8 characters for a new student login' });
+    }
+    if (db.prepare('SELECT 1 FROM users WHERE email=?').get(normalizedEmail)) throw conflict('This email is already used by another account');
+    const duplicate = db.prepare('SELECT student_id FROM student_accounts WHERE email=?').get(normalizedEmail);
+    if (duplicate && duplicate.student_id !== studentId) throw conflict('This email is already used by another student');
+    if (current) {
+      if (password) {
+        db.prepare('UPDATE student_accounts SET email=?,password_hash=? WHERE student_id=?')
+          .run(normalizedEmail, hash(password), studentId);
+      } else {
+        db.prepare('UPDATE student_accounts SET email=? WHERE student_id=?').run(normalizedEmail, studentId);
+      }
+    } else {
+      db.prepare('INSERT INTO student_accounts (student_id,email,password_hash) VALUES (?,?,?)')
+        .run(studentId, normalizedEmail, hash(password));
+    }
+  };
   r.post('/students', admin, (req, res) => {
     const v = validate(req.body, studentRules);
     checkGuardian(v.guardian_id);
-    const id = db.prepare('INSERT INTO students (name, admission_no, section_id, guardian_id) VALUES (?,?,?,?)')
-      .run(v.name, v.admission_no, v.section_id, v.guardian_id).lastInsertRowid;
-    audit(db, req.user, 'CREATE', 'students', id, v);
+    const id = db.transaction(() => {
+      const studentId = db.prepare('INSERT INTO students (name, admission_no, section_id, guardian_id) VALUES (?,?,?,?)')
+        .run(v.name, v.admission_no, v.section_id, v.guardian_id).lastInsertRowid;
+      saveStudentLogin(Number(studentId), req.body);
+      audit(db, req.user, 'CREATE', 'students', studentId, v);
+      return studentId;
+    })();
     res.status(201).json({ id: Number(id), ...v });
   });
   r.put('/students/:id', admin, (req, res) => {
     const v = validate(req.body, studentRules);
     checkGuardian(v.guardian_id);
-    const info = db.prepare('UPDATE students SET name=?, admission_no=?, section_id=?, guardian_id=? WHERE id=?')
-      .run(v.name, v.admission_no, v.section_id, v.guardian_id, req.params.id);
+    const id = Number(req.params.id);
+    const info = db.transaction(() => {
+      const changed = db.prepare('UPDATE students SET name=?, admission_no=?, section_id=?, guardian_id=? WHERE id=?')
+        .run(v.name, v.admission_no, v.section_id, v.guardian_id, id);
+      if (!changed.changes) throw notFound('Student not found');
+      saveStudentLogin(id, req.body);
+      audit(db, req.user, 'UPDATE', 'students', id, v);
+      return changed;
+    })();
     if (!info.changes) throw notFound('Student not found');
-    audit(db, req.user, 'UPDATE', 'students', Number(req.params.id), v);
     res.json({ id: Number(req.params.id), ...v });
   });
   r.delete('/students/:id', admin, (req, res) => {

@@ -26,7 +26,8 @@ const as = {
   asha: () => login('asha.teacher@school.test', 'Teacher@123'), // assigned to 5-A only
   ravi: () => login('ravi.teacher@school.test', 'Teacher@123'), // 5-A English, 5-B Maths
   meera: () => login('meera.guardian@school.test', 'Guardian@123'), // guardian of Aarav (5-A) and Diya (5-B)
-  arjun: () => login('arjun.guardian@school.test', 'Guardian@123') // guardian of Kabir, Rohan, Anaya
+  arjun: () => login('arjun.guardian@school.test', 'Guardian@123'), // guardian of Kabir, Rohan, Anaya
+  aarav: () => login('aarav.student@school.test', 'Student@123')
 };
 const call = async (who, method, url, body) => {
   const t = await as[who]();
@@ -252,6 +253,55 @@ describe('ACCEPTANCE 5: fee totals reconcile with the ledger', () => {
   });
 });
 
+describe('student portal and timetable', () => {
+  test('student login is limited to its linked profile and private records', async () => {
+    const own = studentId('Aarav Singh');
+    const other = studentId('Kabir Patel');
+    const students = (await call('aarav', 'get', '/api/students')).body.data;
+    expect(students.map((s) => s.id)).toEqual([own]);
+    expect((await call('aarav', 'get', `/api/students/${own}`)).status).toBe(200);
+    expect((await call('aarav', 'get', `/api/students/${other}`)).status).toBe(403);
+    expect((await call('aarav', 'get', `/api/students/${own}/attendance`)).status).toBe(200);
+    expect((await call('aarav', 'get', `/api/students/${other}/report-card`)).status).toBe(403);
+    const ownInvoice = db.prepare('SELECT id FROM invoices WHERE student_id=?').get(own).id;
+    const otherInvoice = db.prepare('SELECT id FROM invoices WHERE student_id=?').get(studentId('Kabir Patel')).id;
+    expect((await call('aarav', 'get', `/api/invoices/${ownInvoice}`)).status).toBe(200);
+    expect((await call('aarav', 'get', `/api/invoices/${otherInvoice}`)).status).toBe(403);
+    expect((await call('aarav', 'post', `/api/invoices/${ownInvoice}/payments`, { amount: 10, idempotency_key: 'student-pay-001' })).status).toBe(403);
+  });
+
+  test('timetable visibility follows student, guardian, and teacher access', async () => {
+    const fiveA = sectionId('Class 5 - A');
+    const fiveB = sectionId('Class 5 - B');
+    const studentEntries = (await call('aarav', 'get', `/api/timetable?section_id=${fiveA}`)).body.data;
+    expect(studentEntries).toHaveLength(30);
+    expect((await call('aarav', 'get', `/api/timetable?section_id=${fiveB}`)).status).toBe(403);
+    const guardianSections = new Set((await call('meera', 'get', '/api/timetable')).body.data.map((e) => e.section_name));
+    expect(guardianSections).toEqual(new Set(['A', 'B']));
+    const teacherSections = new Set((await call('asha', 'get', '/api/timetable')).body.data.map((e) => e.section_name));
+    expect(teacherSections).toEqual(new Set(['A']));
+    expect((await call('meera', 'post', '/api/timetable', {})).status).toBe(403);
+  });
+
+  test('admin timetable changes validate assignments and reject teacher conflicts', async () => {
+    const fiveB = sectionId('Class 5 - B');
+    const raviMath = db.prepare('SELECT id FROM assignments WHERE section_id=? AND subject_id=(SELECT id FROM subjects WHERE name=?)')
+      .get(fiveB, 'Mathematics').id;
+    const conflict = await call('admin', 'post', '/api/timetable', {
+      section_id: fiveB, assignment_id: raviMath, weekday: 'MONDAY', period: 4, start_time: '10:45', end_time: '11:30'
+    });
+    expect(conflict.status).toBe(409);
+    const wrongSection = await call('admin', 'post', '/api/timetable', {
+      section_id: fiveB, assignment_id: db.prepare('SELECT id FROM assignments WHERE section_id=?').get(sectionId('Class 5 - A')).id,
+      weekday: 'MONDAY', period: 4, start_time: '10:45', end_time: '11:30'
+    });
+    expect(wrongSection.status).toBe(400);
+    expect((await call('admin', 'post', '/api/timetable', {
+      section_id: fiveB, assignment_id: raviMath, weekday: 'SATURDAY', period: 4, start_time: '10:45', end_time: '11:30'
+    })).status).toBe(400);
+  });
+});
+
 describe('academic administration', () => {
   test('admin can create/search students; duplicates and in-use deletes are conflicts', async () => {
     const guardian = db.prepare("SELECT id FROM users WHERE email='meera.guardian@school.test'").get().id;
@@ -289,6 +339,19 @@ describe('academic administration', () => {
     expect((await call('admin', 'put', `/api/users/${guardian.id}`, {
       name: 'Invalid Password', email: 'meera2@school.test', password: 'short'
     })).status).toBe(400);
+  });
+  test('admin can create a student login without exposing credentials', async () => {
+    const guardian = db.prepare("SELECT id FROM users WHERE email='meera.guardian@school.test'").get().id;
+    const created = await call('admin', 'post', '/api/students', {
+      name: 'Student Login Test', admission_no: 'STU900', section_id: sectionId('Class 5 - A'), guardian_id: guardian,
+      student_login_email: 'student.login@school.test', student_login_password: 'Student@123'
+    });
+    expect(created.status).toBe(201);
+    const loginRes = await request(app).post('/api/auth/login').send({ email: 'student.login@school.test', password: 'Student@123' });
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.user).toMatchObject({ id: created.body.id, role: 'STUDENT' });
+    expect(loginRes.body.user).not.toHaveProperty('password_hash');
+    expect((await request(app).post('/api/auth/login').send({ email: 'student.login@school.test', password: 'wrong-password' })).status).toBe(401);
   });
   test('student guardian must really be a guardian', async () => {
     const teacher = db.prepare("SELECT id FROM users WHERE role='TEACHER'").get().id;

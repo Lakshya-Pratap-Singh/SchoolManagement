@@ -16,21 +16,22 @@ A modular monolith in three layers:
 3. **Persistence** (`src/schema.sql`, `src/db.js`): constraints and indexes that protect data even if code has a bug.
 
 ## 3. Data model
-13 tables (see the ER diagram in the README). Choices worth explaining:
-- **Users hold all roles** (`ADMIN | TEACHER | GUARDIAN`); a student points to one guardian user. This keeps login and permissions in one place.
+15 tables (see the ER diagram in the README). Choices worth explaining:
+- **Staff and guardians use `users`; students use a separate `student_accounts` table** linked one-to-one to a student record. This keeps student identity distinct while still enabling self-only authorization.
 - **Assignments** link teacher + section + subject, with `UNIQUE(section_id, subject_id)` (one teacher per subject per section).
   A teacher's "assigned classes" are derived from this table.
+- **Timetable entries reference assignments**, so each scheduled period has a valid section, subject, and assigned teacher. Unique section/day/period keys and transactional teacher-conflict checks prevent overlapping schedules.
 - **Derived, not stored:** a grade is computed from the current `grading_rules` each time it is read, and invoice paid/outstanding/status are computed from
   `payments`. Nothing can drift out of sync, and changing a rule instantly changes every grade.
 - **Constraints as a backstop:** `UNIQUE(student_id,date,session)`, `UNIQUE(exam_id,student_id)`, `UNIQUE(idempotency_key)`, `CHECK` on enums and amounts, foreign keys on.
 - **Indexes** on every foreign key used for lookups (student→section/guardian, results→student, invoices→student, payments→invoice) and `audit_logs(created_at)`.
 
 ## 4. Security and authorization
-- Passwords hashed with bcrypt; login returns a signed JWT (8h). Every request re-loads the user, so a deleted user loses access immediately.
+- Passwords hashed with bcrypt; login returns a signed JWT (8h). Every request re-loads the user or student account, so removed accounts lose access immediately.
 - Unknown email and wrong password give the same message and similar timing.
 - **Two layers of server checks on every route:**
   1. *Role gate* (`requireRole`): e.g. only ADMIN creates invoices.
-  2. *Row-level rule* (`access.js`): a teacher must be assigned to the section (and subject for marks); a guardian must be the student's guardian. Failure is `403`.
+  2. *Row-level rule* (`access.js`): a teacher must be assigned to the section (and subject for marks); a guardian must be the student's guardian; a student can access only its own record. Failure is `403`.
 - Input is validated server-side (types, ranges, enums, dates); all SQL uses bound parameters; UI output is HTML-escaped.
 - Only synthetic data. `.env` is git-ignored and only `.env.example` is committed.
 
@@ -46,9 +47,9 @@ A modular monolith in three layers:
 | Grading rules with gaps | Rule set must contain 0%, so every score gets a grade |
 
 ## 6. Testing
-30 automated tests (Jest + Supertest) with a fresh in-memory database per test. They cover the five acceptance criteria with both
-success and failure paths, plus grade boundaries, idempotent retries, reconciliation (`billed − paid = outstanding` computed
-independently from the ledger), validation, pagination/search and conflict handling. A jsdom smoke run of the UI exercised all three roles' screens and a guardian payment.
+34 automated tests (Jest + Supertest) with a fresh in-memory database per test. They cover the five acceptance criteria with both
+success and failure paths, student privacy, timetable visibility/conflict validation, grade boundaries, idempotent retries,
+reconciliation (`billed − paid = outstanding` computed independently from the ledger), validation, pagination/search and conflict handling.
 
 ## 7. Trade-offs and what I would do next
 | Decision | Trade-off | Next step |

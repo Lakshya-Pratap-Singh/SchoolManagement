@@ -27,6 +27,7 @@ function getStudentFor(db, user, studentId) {
   if (!s) throw notFound('Student not found');
   if (user.role === 'ADMIN') return s;
   if (user.role === 'GUARDIAN' && s.guardian_id === user.id) return s;
+  if (user.role === 'STUDENT' && s.id === user.student_id) return s;
   if (user.role === 'TEACHER' && teacherSectionIds(db, user.id).includes(s.section_id)) return s;
   throw forbidden('You cannot access this student');
 }

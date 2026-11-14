@@ -1,4 +1,13 @@
 try { process.loadEnvFile?.(); } catch { /* .env is optional */ }
+
+if (process.env.VERCEL) {
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    throw new Error('Set JWT_SECRET to a random value of at least 32 characters in Vercel project settings.');
+  }
+  // Vercel instances have only temporary writable storage; this is demo-only.
+  process.env.DB_FILE = '/tmp/school-management-demo.db';
+}
+
 const { openDb } = require('./db');
 const { seed } = require('./seed');
 const { createApp } = require('./app');
