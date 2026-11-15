@@ -5,8 +5,7 @@ const { HttpError, validate } = require('./util');
 
 const DUMMY_HASH = hash('not-a-real-password'); // equalises timing for unknown emails
 
-function createApp(db) {
-  const app = express();
+function createApp(db, app = express()) {
   app.use(express.json({ limit: '100kb' }));
 
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
